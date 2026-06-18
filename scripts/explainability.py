@@ -14,7 +14,6 @@ import mediapipe.python.solutions.face_mesh as mp_face_mesh
 import numpy as np
 import torch
 from PIL import Image
-from segmenter import FaceSegmenter
 from torchvision import transforms
 from torchvision.transforms import InterpolationMode
 
@@ -34,12 +33,16 @@ from config import (
 # ════════════════════════════════════════════════════════════
 
 _face_mesh = None
-segmenter = FaceSegmenter(str(MODELS_DIR / "79999_iter.pth"))
+from segmenter import FaceSegmenter
+from huggingface_hub import hf_hub_download
 
+# Instanciação correta (usando o caminho do ficheiro descarregado)
+model_path = hf_hub_download(repo_id="liamu/Deepfake-Pesos", filename="79999_iter.pth")
+segmenter_instance = FaceSegmenter(model_path=model_path, device=DEVICE)
 
 def get_region_masks(img_rgb: np.ndarray) -> dict:
-    # Retorna o dicionário de máscaras binárias
-    return segmenter.get_masks(img_rgb)
+    # Chama o método na instância correta
+    return segmenter_instance.get_masks(img_rgb)
 
 
 def get_face_mesh():

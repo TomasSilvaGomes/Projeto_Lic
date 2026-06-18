@@ -66,18 +66,52 @@ def inject_custom_css():
 
 @st.cache_resource
 def load_model():
-    model = SwinV2Classifier(str(CKPT_SWINV2)).to(DEVICE)
-    model.eval()
-    from explainability import get_surgery_model
-
-    get_surgery_model()
+    from huggingface_hub import hf_hub_download
+    
+    # 1. Obter o caminho físico do peso descarregado
+    weights_path = hf_hub_download(
+        repo_id="liamu/Deepfake-Pesos", 
+        filename="model.safetensors"
+    )
+    
+    # 2. Instanciar o modelo fornecendo o argumento obrigatório
+    model = SwinV2Classifier(ckpt_path=weights_path) 
+    
+    # 3. Mover para o dispositivo de inferência e fixar em modo de avaliação
+    model.to(DEVICE).eval()
+    
     return model
 
 
 @st.cache_resource
 def load_clip_df40():
     model = DF40CLIPModel(num_labels=2).to(DEVICE)
-    return model if os.path.exists(CKPT_PATH) else None
+    from huggingface_hub import hf_hub_download
+    
+    weights_path = hf_hub_download(
+        repo_id="liamu/Deepfake-Pesos", 
+        filename="clip_large.pth"
+    )
+    
+    state_dict = torch.load(weights_path, map_location=DEVICE)
+    
+    # Higienizacao SOTA: Remocao de DataParallel e alinhamento arquitetural
+    cleaned_state_dict = {}
+    for key, value in state_dict.items():
+        # 1. Remover prefixo de treino distribuido
+        new_key = key.replace("module.", "") if key.startswith("module.") else key
+        
+        # 2. Traduzir estrutura: Injetar 'vision_model' no path do backbone
+        if new_key.startswith("backbone.") and not new_key.startswith("backbone.vision_model."):
+            new_key = new_key.replace("backbone.", "backbone.vision_model.", 1)
+            
+        cleaned_state_dict[new_key] = value
+            
+    # Injecao estrita com o dicionario mapeado
+    model.load_state_dict(cleaned_state_dict)
+    model.to(DEVICE).eval()
+    
+    return model
 
 
 def extract_main_face(img_bgr, padding_ratio=PADDING_FACE):
@@ -304,9 +338,6 @@ def main():
             unsafe_allow_html=True,
         )
 
-    model = load_model()
-    swin_transform = get_swinv2_transform()
-
     st.sidebar.markdown("### ⚙️ Configuracao da Analise")
     opcoes_input = ["Sua Imagem", "Exemplo 1 (Falso)", "Exemplo 2 (Real)"]
     escolha_input = st.sidebar.selectbox("Fonte de dados:", opcoes_input)
@@ -430,9 +461,6 @@ def main():
 
     with col_result:
         st.markdown("#### 📝 Resultados da Analise")
-        if not analisar:
-            st.info("A aguardar submissao de dados para iniciar o pipeline SOTA.")
-
         if analisar and img_bgr is not None:
             # --- LIMPEZA DE ESTADO FANTASMA ---
             
