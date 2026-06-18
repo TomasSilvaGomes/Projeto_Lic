@@ -79,14 +79,14 @@ def load_model():
     model = SwinV2Classifier(ckpt_path=weights_path) 
     
     # 3. Mover para o dispositivo de inferência e fixar em modo de avaliação
-    model.to(DEVICE).eval()
+    model.to("cpu").eval()
     
     return model
 
 
 @st.cache_resource
 def load_clip_df40():
-    model = DF40CLIPModel(num_labels=2).to(DEVICE)
+    model = DF40CLIPModel(num_labels=2).to("cpu")
     from huggingface_hub import hf_hub_download
     
     weights_path = hf_hub_download(
@@ -94,7 +94,7 @@ def load_clip_df40():
         filename="clip_large.pth"
     )
     
-    state_dict = torch.load(weights_path, map_location=DEVICE)
+    state_dict = torch.load(weights_path, map_location="cpu")
     
     # Higienizacao SOTA: Remocao de DataParallel e alinhamento arquitetural
     cleaned_state_dict = {}
@@ -110,11 +110,20 @@ def load_clip_df40():
             
     # Injecao estrita com o dicionario mapeado
     model.load_state_dict(cleaned_state_dict)
-    model.to(DEVICE).eval()
+    model.to("cpu").eval()
     
     return model
 
 
+@st.cache_resource
+def get_all_models():
+    # Carrega aqui o SwinV2 e o CLIP de uma só vez
+    model = load_model()
+    clip_df40 = load_clip_df40()
+    return model, clip_df40
+
+
+    
 def extract_main_face(img_bgr, padding_ratio=PADDING_FACE):
     """
     Deteta a face usando MediaPipe (SOTA, leve e rápido) e devolve o recorte.
@@ -304,6 +313,7 @@ def render_confidence_bar(prob_fake, threshold):
 
 def main():
     inject_custom_css()
+    model, clip_df40 = get_all_models()
     st.markdown(
         "<h1 style='text-align: center; border-bottom: 2px solid #334155; padding-bottom: 1rem; margin-bottom: 2rem;'>🧑🏻‍💻 Explicador de Imagens</h1>",
         unsafe_allow_html=True,
@@ -496,7 +506,7 @@ def main():
             clip_df40 = load_clip_df40()
 
             # 2. Execucao - Especialista 1: Textura e Contexto GLOBAL (SwinV2)
-            tensor_swin = swin_transform(raw_img_pil).unsqueeze(0).to(DEVICE)
+            tensor_swin = swin_transform(raw_img_pil).unsqueeze(0).to("cpu")
 
             # 3. Execucao - Especialista 2: Semantica BIOMETRICA (CLIP DF-40)
             prob_clip_df40 = 0.0
@@ -505,7 +515,7 @@ def main():
                 tensor_clip = (
                     preprocess_clip(img_pil)
                     .unsqueeze(0)
-                    .to(DEVICE)
+                    .to("cpu")
                     .type(next(clip_df40.parameters()).dtype)
                 )
             
@@ -518,7 +528,7 @@ def main():
                     # Submeter modelo 2
                     if clip_df40 is not None:
                         def clip_infer(t):
-                            with torch.no_grad():
+                            with torch.inference_mode():
                                 return float(torch.softmax(clip_df40(t), dim=1)[0, 1].item())
                         future_clip = executor.submit(clip_infer, tensor_clip)
                     else:
@@ -650,7 +660,7 @@ def main():
                     )
 
                     with st.spinner(f"A gerar justificação pericial via LVM ({vlm_mode})..."):
-                        orchestrator = ForensicVLMOrchestrator(mode=vlm_mode)
+                        orchestrator = ForensicVLMOrchestrator(mode="api")
 
                         # 1. Agrupar os nomes de todas as zonas afetadas
                         nomes_zonas = ", ".join([z.name for z in zones])
