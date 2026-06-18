@@ -11,9 +11,6 @@ from transformers import (
     Swinv2ForImageClassification,
 )
 
-from config import CKPT_PATH, DEVICE
-
-
 def get_swinv2_transform():
     return transforms.Compose(
         [
@@ -54,11 +51,10 @@ class SwinV2Classifier(nn.Module):
     def _load_weights(self, ckpt_path: str):
         path = Path(ckpt_path)
         if not path.exists():
-            raise FileNotFoundError(f"Checkpoint nao encontrado: {ckpt_path}")
+            raise FileNotFoundError(f"Checkpoint não encontrado: {ckpt_path}")
 
         if path.suffix == ".safetensors":
             from safetensors.torch import load_file
-
             state_dict = load_file(str(path), device="cpu")
         else:
             state_dict = torch.load(str(path), map_location="cpu")
@@ -80,22 +76,7 @@ class DF40CLIPModel(nn.Module):
         config = CLIPVisionConfig.from_pretrained("openai/clip-vit-large-patch14")
         self.backbone = CLIPVisionModel(config)
         self.head = nn.Linear(config.hidden_size, num_labels)
-        self._load_weights()
-
-    def _load_weights(self):
-        if os.path.exists(CKPT_PATH):
-            checkpoint = torch.load(CKPT_PATH, map_location=DEVICE)
-            state_dict = checkpoint.get("state_dict", checkpoint)
-            clean_state_dict = {}
-            for k, v in state_dict.items():
-                new_key = k.replace("module.", "") if k.startswith("module.") else k
-                if new_key.startswith("backbone.") and not new_key.startswith(
-                    "backbone.vision_model."
-                ):
-                    new_key = new_key.replace("backbone.", "backbone.vision_model.")
-                clean_state_dict[new_key] = v
-            self.load_state_dict(clean_state_dict, strict=True)
-            self.eval()
+        
 
     def forward(self, pixel_values):
         outputs = self.backbone(pixel_values=pixel_values)

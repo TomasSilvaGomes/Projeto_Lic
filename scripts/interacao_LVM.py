@@ -80,36 +80,49 @@ class ForensicVLMOrchestrator:
         prompt = self.build_forensic_prompt(prob_final, prob_swin, prob_clip, zone_name)
 
         if self.mode == "local":
+            import json
             pil_img = Image.fromarray(crop_rgb)
 
             # ----- CORREÇÃO DE DIMENSIONALIDADE -----
             # Limitamos a resolução para poupar dezenas de megabytes no contexto
-            pil_img.thumbnail((512, 512))
+            pil_img.thumbnail((336, 336), Image.Resampling.BICUBIC)
             # -----------------------------------------
 
             buffered = io.BytesIO()
             pil_img.save(buffered, format="JPEG")
             img_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
+            # Declaração estrita do payload no escopo correto
             payload = {
                 "model": "qwen2.5vl:latest",
                 "prompt": prompt,
                 "images": [img_b64],
-                "stream": False,
+                "stream": True,
                 "options": {"temperature": 0.1},
                 "keep_alive": 0,
             }
+            
             try:
                 response = requests.post(
-                    "http://127.0.0.1:11434/api/generate", json=payload, timeout=90
+                    "http://127.0.0.1:11434/api/generate", 
+                    json=payload, 
+                    stream=True, 
+                    timeout=90
                 )
-                if response.status_code == 200:
-                    return response.json().get(
-                        "response", "Erro: Resposta vazia do Ollama."
-                    )
-                return f"Erro na chamada local ao Ollama: HTTP {response.status_code}"
-            except requests.exceptions.ConnectionError:
-                return "Ollama indisponível localmente. Executa 'ollama serve' no terminal."
+                response.raise_for_status()
+                
+                # Gerador para processamento assíncrono (Streaming)
+                def stream_generator():
+                    for line in response.iter_lines():
+                        if line:
+                            chunk = json.loads(line.decode('utf-8'))
+                            if 'response' in chunk:
+                                yield chunk['response']
+                
+                return stream_generator()
+                
+            except Exception as e:
+                return f"Erro na chamada local ao Ollama: {e}"
 
         elif self.mode == "cloud":
             pil_img = Image.fromarray(crop_rgb).convert("RGB")

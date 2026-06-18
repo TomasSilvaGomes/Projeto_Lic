@@ -47,10 +47,6 @@ def get_model_path(filename: str) -> Path:
             raise FileNotFoundError(f"Falha ao transferir {filename}. Verifica o nome do repositorio. Erro: {e}")
     return local_path
 
-# 5. Caminhos Dinamicos de Modelos e Pesos
-CKPT_SWINV2 = get_model_path("model.safetensors")
-CKPT_PATH = get_model_path("clip_large.pth")
-BIS_PATH = get_model_path("79999_iter.pth")
 
 FUSION_WEIGHTS = CONFIG_DIR / "fusion_weights.json"
 

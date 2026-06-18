@@ -14,6 +14,9 @@ import mediapipe.python.solutions.face_mesh as mp_face_mesh
 import numpy as np
 import torch
 from PIL import Image
+from segmenter import FaceSegmenter
+from huggingface_hub import hf_hub_download
+
 from torchvision import transforms
 from torchvision.transforms import InterpolationMode
 
@@ -22,7 +25,6 @@ from config import (
     CLIP_STD,
     DEVICE,
     FAKE_PROMPT_KEYWORDS,
-    MODELS_DIR,
     REAL_PROMPTS,
     SURGERY_PROMPTS,
     SURGERY_RES,
@@ -33,16 +35,24 @@ from config import (
 # ════════════════════════════════════════════════════════════
 
 _face_mesh = None
-from segmenter import FaceSegmenter
-from huggingface_hub import hf_hub_download
 
-# Instanciação correta (usando o caminho do ficheiro descarregado)
-model_path = hf_hub_download(repo_id="liamu/Deepfake-Pesos", filename="79999_iter.pth")
-segmenter_instance = FaceSegmenter(model_path=model_path, device=DEVICE)
+_segmenter_instance = None
+
+def get_segmenter():
+    """Lazy loading rigoroso do BiSeNet. Só carrega quando chamado a primeira vez."""
+    global _segmenter_instance
+    if _segmenter_instance is None:
+        
+        
+        print(" A instanciar BiSeNet FaceSegmenter...")
+        model_path = hf_hub_download(repo_id="liamu/Deepfake-Pesos", filename="79999_iter.pth")
+        _segmenter_instance = FaceSegmenter(model_path=model_path, device=DEVICE)
+        print(" BiSeNet pronto.")
+    return _segmenter_instance
 
 def get_region_masks(img_rgb: np.ndarray) -> dict:
     # Chama o método na instância correta
-    return segmenter_instance.get_masks(img_rgb)
+    return get_segmenter().get_masks(img_rgb)
 
 
 def get_face_mesh():

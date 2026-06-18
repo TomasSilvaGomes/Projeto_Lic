@@ -8,6 +8,7 @@ from io import BytesIO
 
 import cv2
 import mediapipe as mp
+import concurrent.futures
 import numpy as np
 import streamlit as st
 import streamlit.components.v1 as components
@@ -20,7 +21,7 @@ from explainability import (
 )
 from PIL import Image
 
-from config import CKPT_PATH, CKPT_SWINV2, DEVICE, FUSION_WEIGHTS
+from config import DEVICE, FUSION_WEIGHTS
 from models.models import (
     DF40CLIPModel,
     SwinV2Classifier,
@@ -496,8 +497,6 @@ def main():
 
             # 2. Execucao - Especialista 1: Textura e Contexto GLOBAL (SwinV2)
             tensor_swin = swin_transform(raw_img_pil).unsqueeze(0).to(DEVICE)
-            with torch.no_grad():
-                prob_swin = float(model.predict_prob(tensor_swin))
 
             # 3. Execucao - Especialista 2: Semantica BIOMETRICA (CLIP DF-40)
             prob_clip_df40 = 0.0
@@ -509,10 +508,30 @@ def main():
                     .to(DEVICE)
                     .type(next(clip_df40.parameters()).dtype)
                 )
-                with torch.no_grad():
-                    prob_clip_df40 = float(
-                        torch.softmax(clip_df40(tensor_clip), dim=1)[0, 1].item()
-                    )
+            
+            with st.spinner("A executar inferencia"):
+                with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                    
+                    # Submeter modelo 1
+                    future_swin = executor.submit(model.predict_prob, tensor_swin)
+                    
+                    # Submeter modelo 2
+                    if clip_df40 is not None:
+                        def clip_infer(t):
+                            with torch.no_grad():
+                                return float(torch.softmax(clip_df40(t), dim=1)[0, 1].item())
+                        future_clip = executor.submit(clip_infer, tensor_clip)
+                    else:
+                        future_clip = executor.submit(lambda: 0.0)
+                        
+                    # Submeter modelo 3
+                    future_surgery = executor.submit(generate_heatmap, img_hires)
+
+                    # O Python bloqueia aqui ate que o modelo MAIS LENTO termine.
+                    # Como estao a correr em paralelo, ganhamos a fracao de tempo dos outros dois.
+                    prob_swin = float(future_swin.result())
+                    prob_clip_df40 = float(future_clip.result())
+                    contrastive_hm, per_text_hm, scores, prompts, _ = future_surgery.result()
 
             # 4. Execucao - Explicabilidade (CLIP Surgery Vanilla)
             contrastive_hm, per_text_hm, scores, prompts, _ = generate_heatmap(
@@ -644,7 +663,7 @@ def main():
                         global_bbox = (min_x, min_y, max_x, max_y)
 
                         # 3. Passar a lista completa e a caixa global
-                        justification = orchestrator.generate_justification(
+                        justification_stream = orchestrator.generate_justification(
                             img_rgb=img_hires,
                             prob_final=prob_final,
                             prob_swin=prob_swin,
@@ -653,12 +672,17 @@ def main():
                             bbox=global_bbox,
                         )
 
-                    st.markdown(
-                        f"<div style='background-color: #0f172a; padding: 20px; border-radius: 8px; border-left: 4px solid #2563eb; font-size: 14px; color: #cbd5e1; line-height: 1.6;'>"
-                        f"{justification}"
-                        f"</div>",
-                        unsafe_allow_html=True,
-                    )
+                    # 3. Interceção do output e injeção progressiva no ecrã
+                    if vlm_mode == "local" and not isinstance(justification_stream, str):
+                        st.write_stream(justification_stream)
+                    else:
+                        # Fallback estático para o modo Cloud
+                        st.markdown(
+                            f"<div style='background-color: #0f172a; padding: 20px; border-radius: 8px; border-left: 4px solid #2563eb; font-size: 14px; color: #cbd5e1; line-height: 1.6;'>"
+                            f"{justification_stream}"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
 
             else:
                 st.image(
