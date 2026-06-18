@@ -1,4 +1,4 @@
-# 1. Imagem Base com suporte CUDA 13.0 
+# 1. Imagem Base com suporte CUDA 13.0
 FROM nvidia/cuda:13.0.0-base-ubuntu22.04
 
 # 2. Variaveis de Ambiente SOTA
@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y software-properties-common && \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# 4. Criar utilizador seguro (Exigencia de isolamento do Hugging Face)
+# 4. Criar utilizador seguro
 RUN useradd -m -u 1000 user
 USER user
 ENV HOME=/home/user
@@ -27,14 +27,14 @@ ENV HOME=/home/user
 # 5. Definir diretorio de trabalho
 WORKDIR $HOME/app
 
-# 6. Criar e ativar ambiente virtual (Contorna bloqueios do pip no Linux)
+# 6. Criar e ativar ambiente virtual
 ENV VIRTUAL_ENV=$HOME/app/venv
 RUN python3.11 -m venv $VIRTUAL_ENV
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
-# 7. Copiar dependencias e instalar no ambiente virtual
+# 7. Copiar dependencias e instalar (Encadeamento corrigido)
 COPY --chown=user requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
+RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124 && \
     pip install --no-cache-dir -r requirements.txt
 
 # 8. Copiar o restante codigo SOTA
