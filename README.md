@@ -1,10 +1,10 @@
 ---
 title: Deepfakes
-emoji: 🌍
+emoji: 🛡️
 colorFrom: blue
 colorTo: red
-sdk: docker
+sdk: streamlit
+sdk_version: 1.36.0
+app_file: scripts/app.py
 pinned: false
 ---
-
-Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
