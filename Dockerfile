@@ -44,4 +44,4 @@ COPY --chown=user . .
 EXPOSE 8501
 
 # 10. Comando de arranque
-CMD ["streamlit", "run", "scripts/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["streamlit", "run", "scripts/app.py", "--server.address=0.0.0.0", "--server.port=7860"]
