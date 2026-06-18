@@ -435,6 +435,12 @@ def main():
 
         if analisar and img_bgr is not None:
             # --- LIMPEZA DE ESTADO FANTASMA ---
+            
+            with st.spinner("A carregar modelos na GPU..."):
+                model = load_model()
+                swin_transform = get_swinv2_transform()
+                
+                
             chaves_para_limpar = [
                 "contrastive_hm",
                 "per_text_hm",
