@@ -1,5 +1,5 @@
 import base64
-import gc
+import concurrent.futures
 import json
 import os
 import random
@@ -8,7 +8,6 @@ from io import BytesIO
 
 import cv2
 import mediapipe as mp
-import concurrent.futures
 import numpy as np
 import streamlit as st
 import streamlit.components.v1 as components
@@ -21,7 +20,7 @@ from explainability import (
 )
 from PIL import Image
 
-from config import DEVICE, FUSION_WEIGHTS
+from config import FUSION_WEIGHTS
 from models.models import (
     DF40CLIPModel,
     SwinV2Classifier,
@@ -68,19 +67,18 @@ def inject_custom_css():
 @st.cache_resource
 def load_model():
     from huggingface_hub import hf_hub_download
-    
+
     # 1. Obter o caminho físico do peso descarregado
     weights_path = hf_hub_download(
-        repo_id="liamu/Deepfake-Pesos", 
-        filename="model.safetensors"
+        repo_id="liamu/Deepfake-Pesos", filename="model.safetensors"
     )
-    
+
     # 2. Instanciar o modelo fornecendo o argumento obrigatório
-    model = SwinV2Classifier(ckpt_path=weights_path) 
-    
+    model = SwinV2Classifier(ckpt_path=weights_path)
+
     # 3. Mover para o dispositivo de inferência e fixar em modo de avaliação
     model.to("cpu").eval()
-    
+
     return model
 
 
@@ -88,30 +86,31 @@ def load_model():
 def load_clip_df40():
     model = DF40CLIPModel(num_labels=2).to("cpu")
     from huggingface_hub import hf_hub_download
-    
+
     weights_path = hf_hub_download(
-        repo_id="liamu/Deepfake-Pesos", 
-        filename="clip_large.pth"
+        repo_id="liamu/Deepfake-Pesos", filename="clip_large.pth"
     )
-    
+
     state_dict = torch.load(weights_path, map_location="cpu")
-    
+
     # Higienizacao SOTA: Remocao de DataParallel e alinhamento arquitetural
     cleaned_state_dict = {}
     for key, value in state_dict.items():
         # 1. Remover prefixo de treino distribuido
         new_key = key.replace("module.", "") if key.startswith("module.") else key
-        
+
         # 2. Traduzir estrutura: Injetar 'vision_model' no path do backbone
-        if new_key.startswith("backbone.") and not new_key.startswith("backbone.vision_model."):
+        if new_key.startswith("backbone.") and not new_key.startswith(
+            "backbone.vision_model."
+        ):
             new_key = new_key.replace("backbone.", "backbone.vision_model.", 1)
-            
+
         cleaned_state_dict[new_key] = value
-            
+
     # Injecao estrita com o dicionario mapeado
     model.load_state_dict(cleaned_state_dict)
     model.to("cpu").eval()
-    
+
     return model
 
 
@@ -123,7 +122,6 @@ def get_all_models():
     return model, clip_df40
 
 
-    
 def extract_main_face(img_bgr, padding_ratio=PADDING_FACE):
     """
     Deteta a face usando MediaPipe (SOTA, leve e rápido) e devolve o recorte.
@@ -409,10 +407,10 @@ def main():
                 raw_img_bgr = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
         else:
             from config import ROOT_DIR
-            
+
             pasta_exemplos = ROOT_DIR / "exemplos"
             nome_base = "false" if "Falso" in escolha_input else "real"
-            
+
             # Pesquisa iterativa pela extensao correta (Imune a erros de formato)
             path = None
             for ext in [".png", ".jpg", ".jpeg"]:
@@ -420,11 +418,9 @@ def main():
                 if caminho_candidato.exists():
                     path = str(caminho_candidato)
                     break
-                    
+
             if path is not None:
                 raw_img_bgr = cv2.imread(path)
-                
-            
 
         # Processamento de Recorte SOTA antes de libertar a UI
         analisar = False
@@ -437,25 +433,32 @@ def main():
             if cropped_bgr is None:
                 st.error(status)
             else:
-                img_bgr = cropped_bgr 
+                img_bgr = cropped_bgr
                 st.image(
                     cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB),
                     caption="Alvo isolado para inferência",
                     width=350,
                 )
-                
+
                 # --- CORREÇÃO DO LOOP INFINITO ---
                 # Um botão para tudo. Garante que podes mexer nos sliders sem reiniciar a IA.
                 if escolha_input == "Sua Imagem":
-                    analisar = st.button("Executar Analise Forense", use_container_width=True)
+                    analisar = st.button(
+                        "Executar Analise Forense", use_container_width=True
+                    )
                 else:
-                    analisar = st.button(f"Analisar Exemplo ({nome_base.upper()})", use_container_width=True)
-                
+                    analisar = st.button(
+                        f"Analisar Exemplo ({nome_base.upper()})",
+                        use_container_width=True,
+                    )
+
         st.markdown("<br>", unsafe_allow_html=True)
-        
+
         # --- CORREÇÃO DA DUPLICAÇÃO ---
         # Apenas um bloco de expansão limpo e formatado
-        with st.expander("Motor de Decisão: Fusão 3D Calibrada (Explicação)", expanded=False):
+        with st.expander(
+            "Motor de Decisão: Fusão 3D Calibrada (Explicação)", expanded=False
+        ):
             st.markdown(
                 """
                 Para garantir precisão contra qualquer tipo de ataque, usamos uma **Fusão Algébrica** de três especialistas, combinados através de uma **Regressão Logística calibrada**:
@@ -474,12 +477,11 @@ def main():
         st.markdown("#### 📝 Resultados da Analise")
         if analisar and img_bgr is not None:
             # --- LIMPEZA DE ESTADO FANTASMA ---
-            
+
             with st.spinner("A carregar modelos na GPU..."):
                 model = load_model()
                 swin_transform = get_swinv2_transform()
-                
-                
+
             chaves_para_limpar = [
                 "contrastive_hm",
                 "per_text_hm",
@@ -518,22 +520,25 @@ def main():
                     .to("cpu")
                     .type(next(clip_df40.parameters()).dtype)
                 )
-            
+
             with st.spinner("A executar inferencia"):
                 with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-                    
                     # Submeter modelo 1
                     future_swin = executor.submit(model.predict_prob, tensor_swin)
-                    
+
                     # Submeter modelo 2
                     if clip_df40 is not None:
+
                         def clip_infer(t):
                             with torch.inference_mode():
-                                return float(torch.softmax(clip_df40(t), dim=1)[0, 1].item())
+                                return float(
+                                    torch.softmax(clip_df40(t), dim=1)[0, 1].item()
+                                )
+
                         future_clip = executor.submit(clip_infer, tensor_clip)
                     else:
                         future_clip = executor.submit(lambda: 0.0)
-                        
+
                     # Submeter modelo 3
                     future_surgery = executor.submit(generate_heatmap, img_hires)
 
@@ -541,7 +546,9 @@ def main():
                     # Como estao a correr em paralelo, ganhamos a fracao de tempo dos outros dois.
                     prob_swin = float(future_swin.result())
                     prob_clip_df40 = float(future_clip.result())
-                    contrastive_hm, per_text_hm, scores, prompts, _ = future_surgery.result()
+                    contrastive_hm, per_text_hm, scores, prompts, _ = (
+                        future_surgery.result()
+                    )
 
             # 4. Execucao - Explicabilidade (CLIP Surgery Vanilla)
             contrastive_hm, per_text_hm, scores, prompts, _ = generate_heatmap(
@@ -593,12 +600,11 @@ def main():
 
             # Probabilidade Final via Funcao Sigmoide
             prob_final = float(1.0 / (1.0 + np.exp(-logit)))
-            
 
             prob_max_especialista = max(prob_swin, prob_clip_df40)
             if prob_max_especialista > 0.85:
                 prob_final = max(prob_final, prob_max_especialista)
-                
+
             is_fake = prob_final > threshold
             st.session_state.update(
                 {
@@ -647,59 +653,71 @@ def main():
                         contrastive_hm, zones, prob_threshold=0.40
                     )
 
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                    gc.collect()
-
-                    # --- INTEGRAÇÃO DO LVM ---
-                    st.markdown("### 📄 Relatório Forense Automatizado (LVM)")
-
-                    # Determinar modo automaticamente com base no ambiente
-                    vlm_mode = (
-                        "cloud" if "HUGGINGFACE_SPACES" in os.environ else "local"
-                    )
-
-                    with st.spinner(f"A gerar justificação pericial via LVM ({vlm_mode})..."):
-                        orchestrator = ForensicVLMOrchestrator(mode="api")
-
-                        # 1. Agrupar os nomes de todas as zonas afetadas
-                        nomes_zonas = ", ".join([z.name for z in zones])
-
-                        # 2. Criar uma Bounding Box global que englobe todos os artefactos
-                        min_x = min([z.bbox[0] for z in zones])
-                        min_y = min([z.bbox[1] for z in zones])
-                        max_x = max([z.bbox[2] for z in zones])
-                        max_y = max([z.bbox[3] for z in zones])
-                        global_bbox = (min_x, min_y, max_x, max_y)
-
-                        # 3. Passar a lista completa e a caixa global
-                        justification_stream = orchestrator.generate_justification(
-                            img_rgb=img_hires,
-                            prob_final=prob_final,
-                            prob_swin=prob_swin,
-                            prob_clip=prob_clip_df40,
-                            zone_name=nomes_zonas,
-                            bbox=global_bbox,
-                        )
-
-                    # 3. Interceção do output e injeção progressiva no ecrã
-                    if vlm_mode == "local" and not isinstance(justification_stream, str):
-                        st.write_stream(justification_stream)
-                    else:
-                        # Fallback estático para o modo Cloud
-                        st.markdown(
-                            f"<div style='background-color: #0f172a; padding: 20px; border-radius: 8px; border-left: 4px solid #2563eb; font-size: 14px; color: #cbd5e1; line-height: 1.6;'>"
-                            f"{justification_stream}"
-                            f"</div>",
-                            unsafe_allow_html=True,
-                        )
-
             else:
                 st.image(
                     img_rgb,
                     width=250,
                     caption="Imagem classificada como REAL de forma unânime.",
                 )
+
+    if analisar and img_bgr is not None and is_fake and "zones" in locals() and zones:
+        st.markdown(
+            "<hr style='border: 1px solid #334155; margin-top: 2rem; margin-bottom: 2rem;'>",
+            unsafe_allow_html=True,
+        )
+        st.markdown("### 📄 Relatório Forense Automatizado")
+
+        em_producao = "SPACE_ID" in os.environ
+        modo_display = "API (Gemini)" if em_producao else "Local"
+
+        # O st.spinner apenas mostra a roda de carregamento enquanto aguarda pela API, desaparecendo depois
+        with st.spinner("A conectar ao explicador que dá a justificação ..."):
+            orchestrator = ForensicVLMOrchestrator(mode="api")
+            nomes_zonas = ", ".join([z.name for z in zones])
+
+            min_x = min([z.bbox[0] for z in zones])
+            min_y = min([z.bbox[1] for z in zones])
+            max_x = max([z.bbox[2] for z in zones])
+            max_y = max([z.bbox[3] for z in zones])
+            global_bbox = (min_x, min_y, max_x, max_y)
+
+            justification_stream = orchestrator.generate_justification(
+                img_rgb=img_hires,
+                prob_final=prob_final,
+                prob_swin=prob_swin,
+                prob_clip=prob_clip_df40,
+                zone_name=nomes_zonas,
+                bbox=global_bbox,
+            )
+
+        # Caixa de texto limpa, sem ser colapsável, que ocupará todo o espaço horizontal do ecrã
+        estilo_caixa = "background-color: #0f172a; padding: 25px; border-radius: 8px; border-left: 4px solid #2563eb; font-size: 15px; color: #f8fafc; line-height: 1.7; box-shadow: 0 4px 6px rgba(0,0,0,0.2); margin-bottom: 2rem;"
+
+        caixa_dinamica = st.empty()
+
+        if not isinstance(justification_stream, str):
+            texto_acumulado = ""
+            for chunk in justification_stream:
+                if chunk:
+                    texto_acumulado += chunk
+                    # Atualiza a UI frame a frame, incluindo um cursor de terminal dinâmico
+                    caixa_dinamica.markdown(
+                        f"<div style='{estilo_caixa}'>{texto_acumulado} ▌</div>",
+                        unsafe_allow_html=True,
+                    )
+
+            # Estado final: Remove o cursor após o fecho da ligação
+            caixa_dinamica.markdown(
+                f"<div style='{estilo_caixa}'>{texto_acumulado}</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            caixa_dinamica.markdown(
+                f"<div style='{estilo_caixa}'>{justification_stream}</div>",
+                unsafe_allow_html=True,
+            )
+    # --------------------------------------------
+
     if (
         analisar
         and (is_fake or forcar_clip)
